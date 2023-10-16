@@ -1,0 +1,127 @@
+spring:
+  application:
+    name: yang-bi
+  # 支持 swagger3
+  mvc:
+    pathmatch:
+      matching-strategy: ant_path_matcher
+  # session 配置
+  session:
+    #
+    store-type: redis
+    # 30 天过期
+    timeout: 2592000
+  # 数据库配置
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://106.55.250.250:3306/yang_bi
+    username: root
+    password: yang1205
+  # Redis 配置
+  redis:
+    database: 0
+    host: 106.55.250.250
+    port: 6379
+    password: chao1205
+    timeout: 5000
+  redisson:
+    database: 2
+    host: 106.55.250.250
+    port: 6379
+    password: chao1205
+  rabbitmq:
+    host: 106.55.250.250
+    port: 5672
+    username: guest
+    password: guest
+    virtualHost: /
+      #    #确认消息已发送到交换机(Exchange)
+      #    publisher-confirm-type: correlated
+      #    #确认消息已发送到队列(Queue)
+      #    publisher-returns: true
+    listener:
+      simple:
+        concurrency: 1
+        max-concurrency: 3
+        # 消费者预取1条数据到内存，默认为250条
+        prefetch: 1
+        # 确定机制
+        acknowledge-mode: manual
+  # Elasticsearch 配置
+  # todo 需替换配置，然后取消注释
+#  elasticsearch:
+#    uris: http://localhost:9200
+#    username: root
+#    password: 123456
+  # 文件上传
+  servlet:
+    multipart:
+      # 大小限制
+      max-file-size: 10MB
+server:
+  port: 8101
+  servlet:
+    context-path: /api
+    # cookie 30 天过期
+    session:
+      cookie:
+        max-age: 2592000
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: false
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      logic-delete-field: isDelete # 全局逻辑删除的实体字段名
+      logic-delete-value: 1 # 逻辑已删除值（默认为 1）
+      logic-not-delete-value: 0 # 逻辑未删除值（默认为 0）
+# 微信相关
+
+
+wx:
+  # 微信公众平台
+  # todo 需替换配置
+  mp:
+    token: xxx
+    aesKey: xxx
+    appId: xxx
+    secret: xxx
+    config-storage:
+      http-client-type: HttpClient
+      key-prefix: wx
+      redis:
+        host: 106.55.250.250
+        port: 6379
+        password: chao1205
+      type: Memory
+  # 微信开放平台
+  # todo 需替换配置
+  open:
+    appId: xxx
+    appSecret: xxx
+# 对象存储
+# todo 需替换配置
+cos:
+  client:
+    accessKey: xxx
+    secretKey: xxx
+    region: xxx
+    bucket: xxx
+
+
+# 鱼聪明AI配置
+yuapi:
+  client:
+    access-key: y9hl4iwck3p09ep2t1mguoywpiao611m
+    secret-key: n7wsnlyjazc15fbzm9pbiv6r77jr6luv
+
+#qq邮箱相关配置
+# 邮箱
+msm:
+  email: 1285224653@qq.com
+  # host
+  host: smtp.qq.com
+  # 端口
+  port: 465
+  # 发送短信的密码
+  password: hxlvdzttomuvjffh
