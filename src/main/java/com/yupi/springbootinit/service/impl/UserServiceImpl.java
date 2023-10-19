@@ -56,7 +56,6 @@ import static com.yupi.springbootinit.utils.LeakyBucket.registerLeakyBucket;
 @Service
 @Slf4j
 public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements UserService {
-    
 
 
     /**
@@ -76,15 +75,13 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     private static final String CAPTCHA_PREFIX = "api:captchaId:";
 
 
-
-
     @Resource
     private Gson gson;
 
     //登录和注册的标识，方便切换不同的令牌桶来限制验证码发送
     private static final String LOGIN_SIGN = "login";
 
-    private static final String REGISTER_SIGN="register";
+    private static final String REGISTER_SIGN = "register";
 
 
     @Override
@@ -131,7 +128,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     }
 
     @Override
-    public LoginUserVO userLogin(String userAccount, String userPassword, HttpServletRequest request,HttpServletResponse response) {
+    public LoginUserVO userLogin(String userAccount, String userPassword, HttpServletRequest request, HttpServletResponse response) {
         // 1. 校验
         if (StringUtils.isAnyBlank(userAccount, userPassword)) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR, "参数为空");
@@ -169,17 +166,18 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     public User getLoginUser(HttpServletRequest request) {
         // 先判断是否已登录
         Long userId = JwtUtils.getUserIdByToken(request);
-        if (userId == null){
+        if (userId == null) {
             throw new BusinessException(ErrorCode.NOT_LOGIN_ERROR);
         }
 
-        String userJson = stringRedisTemplate.opsForValue().get(USER_LOGIN_STATE+userId);
+        String userJson = stringRedisTemplate.opsForValue().get(USER_LOGIN_STATE + userId);
         User user = gson.fromJson(userJson, User.class);
-        if (user == null){
+        if (user == null) {
             throw new BusinessException(ErrorCode.NOT_LOGIN_ERROR);
         }
         return user;
     }
+
     /**
      * 获取当前登录用户（允许未登录）
      *
@@ -223,16 +221,16 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
         //1.校验邮箱验证码是否正确
         if (!emailCodeValid(emailNum, emailCode)) {
-            throw new BusinessException(ErrorCode.PARAMS_ERROR,"邮箱验证码错误!!!");
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "邮箱验证码错误!!!");
         }
 
         //2.校验邮箱是否存在
         QueryWrapper<User> queryWrapper = new QueryWrapper<>();
-        queryWrapper.eq("email",emailNum);
+        queryWrapper.eq("email", emailNum);
         User user = this.getOne(queryWrapper);
 
-        if(user == null){
-            throw new BusinessException(ErrorCode.PARAMS_ERROR,"用户不存在！");
+        if (user == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "用户不存在！");
         }
 
         return setLoginUser(response, user);
@@ -240,6 +238,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
     /**
      * 记录用户的登录态，并返回脱敏后的登录用户
+     *
      * @param response
      * @param user
      * @return
@@ -256,6 +255,7 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
     /**
      * 发送邮箱
+     *
      * @param email
      * @param captchaType
      */
@@ -263,27 +263,27 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     public void sendCode(String email, String captchaType) {
 
 
-        if (StringUtils.isBlank(captchaType)){
-            throw new BusinessException(ErrorCode.PARAMS_ERROR,"验证码类型为空!!!");
+        if (StringUtils.isBlank(captchaType)) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "验证码类型为空!!!");
         }
 
         //令牌桶算法实现短信接口的限流，因为手机号码重复发送短信，要进行流量控制
         //解决同一个手机号的并发问题，锁的粒度非常小，不影响性能。只是为了防止用户第一次发送短信时的恶意调用
         synchronized (email.intern()) {
-            Boolean exist = stringRedisTemplate.hasKey(UserConstant.USER_LOGIN_EMAIL_CODE +email);
-            if (exist!=null && exist) {
+            Boolean exist = stringRedisTemplate.hasKey(UserConstant.USER_LOGIN_EMAIL_CODE + email);
+            if (exist != null && exist) {
                 //1.令牌桶算法对手机短信接口进行限流 具体限流规则为同一个手机号，60s只能发送一次
-                long lastTime=0L;
+                long lastTime = 0L;
                 LeakyBucket leakyBucket = null;
-                if (captchaType.equals(REGISTER_SIGN)){
+                if (captchaType.equals(REGISTER_SIGN)) {
                     String strLastTime = stringRedisTemplate.opsForValue().get(UserConstant.USER_REGISTER_EMAIL_CODE + email);
-                    if (strLastTime!=null){
+                    if (strLastTime != null) {
                         lastTime = Long.parseLong(strLastTime);
                     }
                     leakyBucket = registerLeakyBucket;
-                }else{
+                } else {
                     String strLastTime = stringRedisTemplate.opsForValue().get(UserConstant.USER_LOGIN_EMAIL_CODE + email);
-                    if (strLastTime!=null){
+                    if (strLastTime != null) {
                         lastTime = Long.parseLong(strLastTime);
                     }
                     leakyBucket = loginLeakyBucket;
@@ -291,20 +291,20 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
 
                 if (!leakyBucket.control(lastTime)) {
                     log.info("邮箱发送太频繁了");
-                    throw new BusinessException(ErrorCode.PARAMS_ERROR,"邮箱送太频繁了");
+                    throw new BusinessException(ErrorCode.PARAMS_ERROR, "邮箱送太频繁了");
                 }
             }
             //2.符合限流规则则生成手机短信
             String code = RandomUtil.randomNumbers(4);
             SmsMessage smsMessage = new SmsMessage(email, code);
             //消息队列异步发送短信，提高短信的吞吐量
-            rabbitTemplate.convertAndSend(EXCHANGE_SMS_INFORM,ROUTINGKEY_SMS,smsMessage);
-            log.info("邮箱对象："+smsMessage.toString());
+            rabbitTemplate.convertAndSend(EXCHANGE_SMS_INFORM, ROUTINGKEY_SMS, smsMessage);
+            log.info("邮箱对象：" + smsMessage.toString());
             //更新手机号发送短信的时间
-            if (captchaType.equals(REGISTER_SIGN)){
-                stringRedisTemplate.opsForValue().set(UserConstant.USER_REGISTER_EMAIL_CODE +email,""+System.currentTimeMillis()/1000);
-            }else {
-                stringRedisTemplate.opsForValue().set(UserConstant.USER_LOGIN_EMAIL_CODE +email,""+System.currentTimeMillis()/1000);
+            if (captchaType.equals(REGISTER_SIGN)) {
+                stringRedisTemplate.opsForValue().set(UserConstant.USER_REGISTER_EMAIL_CODE + email, "" + System.currentTimeMillis() / 1000);
+            } else {
+                stringRedisTemplate.opsForValue().set(UserConstant.USER_LOGIN_EMAIL_CODE + email, "" + System.currentTimeMillis() / 1000);
             }
 
 
@@ -319,13 +319,13 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
      * @param request
      */
     @Override
-    public boolean userLogout(HttpServletRequest request,HttpServletResponse response) {
+    public boolean userLogout(HttpServletRequest request, HttpServletResponse response) {
         Cookie[] cookies = request.getCookies();
         for (Cookie cookie : cookies) {
-            if (cookie.getName().equals("token")){
+            if (cookie.getName().equals("token")) {
                 Long userId = JwtUtils.getUserIdByToken(request);
-                stringRedisTemplate.delete(USER_LOGIN_STATE+userId);
-                Cookie timeOutCookie = new Cookie(cookie.getName(),cookie.getValue());
+                stringRedisTemplate.delete(USER_LOGIN_STATE + userId);
+                Cookie timeOutCookie = new Cookie(cookie.getName(), cookie.getValue());
                 timeOutCookie.setMaxAge(0);
                 response.addCookie(timeOutCookie);
                 return true;
@@ -387,17 +387,17 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     @Override
     public Long userEmailRegister(String emailNum, String emailCaptcha) {
         if (!emailCodeValid(emailNum, emailCaptcha)) {
-            throw new BusinessException(ErrorCode.PARAMS_ERROR,"邮箱格式或邮箱验证码错误!!!");
+            throw new BusinessException(ErrorCode.PARAMS_ERROR, "邮箱格式或邮箱验证码错误!!!");
         }
 
         //2.校验邮箱是否已经注册过
         synchronized (emailNum.intern()) {
             // 账户不能重复
             QueryWrapper<User> queryWrapper = new QueryWrapper<>();
-            queryWrapper.eq("email",emailNum);
+            queryWrapper.eq("email", emailNum);
             long count = this.baseMapper.selectCount(queryWrapper);
             if (count > 0) {
-                throw new BusinessException(ErrorCode.PARAMS_ERROR,"邮箱已经注册过了！！！账号重复");
+                throw new BusinessException(ErrorCode.PARAMS_ERROR, "邮箱已经注册过了！！！账号重复");
             }
 
             // 3. 插入数据
@@ -413,8 +413,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
             return user.getId();
         }
     }
+
     /**
      * 邮箱验证码校验
+     *
      * @param emailNum
      * @param emailCode
      * @return
@@ -436,12 +438,10 @@ public class UserServiceImpl extends ServiceImpl<UserMapper, User> implements Us
     public void getCaptcha(HttpServletRequest request, HttpServletResponse response) {
         //前端必须传一个 signature 来作为唯一标识
         String signature = request.getHeader("signature");
-        if (!StringUtils.isEmpty(signature)) {
-            stringRedisTemplate.opsForValue().set(UserConstant.CAPTCHA_PREFIX,signature,2,TimeUnit.MINUTES);
-        }
-        if(StringUtils.isEmpty(signature)) {
+        if (StringUtils.isEmpty(signature)) {
             throw new BusinessException(ErrorCode.SYSTEM_ERROR);
         }
+        stringRedisTemplate.opsForValue().set(UserConstant.CAPTCHA_PREFIX, signature, 2, TimeUnit.MINUTES);
 
         try {
             // 自定义纯数字的验证码（随机4位数字，可重复）

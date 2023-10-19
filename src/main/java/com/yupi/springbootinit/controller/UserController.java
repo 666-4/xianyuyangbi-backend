@@ -60,11 +60,6 @@ public class UserController {
         String userAccount = userRegisterRequest.getUserAccount();
         String userPassword = userRegisterRequest.getUserPassword();
         String checkPassword = userRegisterRequest.getCheckPassword();
-        String captcha = userRegisterRequest.getCaptcha();
-        String signature = stringRedisTemplate.opsForValue().get(UserConstant.CAPTCHA_PREFIX);
-        String frontendCode = stringRedisTemplate.opsForValue().get(UserConstant.CAPTCHA_PREFIX + signature);
-        ThrowUtils.throwIf(StringUtils.isBlank(frontendCode),ErrorCode.OPERATION_ERROR,"验证码已过期");
-        ThrowUtils.throwIf(!captcha.equals(frontendCode),ErrorCode.OPERATION_ERROR,"两次输入的验证码不一致，请重新输入");
         if (StringUtils.isAnyBlank(userAccount, userPassword, checkPassword)) {
             return null;
         }
@@ -147,6 +142,7 @@ public class UserController {
     @GetMapping("/getCaptcha")
     public void getCaptcha(HttpServletRequest request, HttpServletResponse response) {
         userService.getCaptcha(request, response);
+
 
     }
 

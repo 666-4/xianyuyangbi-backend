@@ -39,6 +39,11 @@ public class ChartEditRequest implements Serializable {
     private String chartType;
 
     /**
+     * 图表类型
+     */
+    private Integer chartStatus;
+
+    /**
      * 图表名称
      */
     private String chartName;

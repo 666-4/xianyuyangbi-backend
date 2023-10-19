@@ -11,6 +11,7 @@ import com.yupi.springbootinit.common.ErrorCode;
 import com.yupi.springbootinit.common.ResultUtils;
 import com.yupi.springbootinit.constant.ChartConstant;
 import com.yupi.springbootinit.constant.CommonConstant;
+import com.yupi.springbootinit.constant.RabbitmqConstant;
 import com.yupi.springbootinit.constant.UserConstant;
 import com.yupi.springbootinit.exception.BusinessException;
 import com.yupi.springbootinit.exception.ThrowUtils;
@@ -20,6 +21,7 @@ import com.yupi.springbootinit.model.dto.chart.*;
 import com.yupi.springbootinit.model.entity.Chart;
 import com.yupi.springbootinit.model.entity.User;
 import com.yupi.springbootinit.model.vo.BiResponse;
+import com.yupi.springbootinit.rabbitmq.BiMessageProducer;
 import com.yupi.springbootinit.service.ChartService;
 import com.yupi.springbootinit.service.UserService;
 import com.yupi.springbootinit.utils.ExcelUtils;
@@ -27,6 +29,7 @@ import com.yupi.springbootinit.utils.SqlUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.ObjectUtils;
 import org.apache.commons.lang3.StringUtils;
+import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.beans.BeanUtils;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
@@ -51,6 +54,8 @@ public class ChartController {
     private ChartService chartService;
     @Resource
     private UserService userService;
+    @Resource
+    private RabbitTemplate rabbitTemplate;
 
     @Resource
     private AiManager aiManager;
@@ -196,7 +201,7 @@ public class ChartController {
     // endregion
 
     /**
-     * 编辑（用户）
+     * 编辑（图表）
      *
      * @param chartEditRequest
      * @param request
@@ -333,14 +338,14 @@ public class ChartController {
             updateChart.setChartStatus(ChartConstant.CHART_STATUS_RUNNING);
             boolean updateResult01 = chartService.updateById(updateChart);
             if (!updateResult01) {
-                handleChartUpdateError(chartId, "AI生成错误！");
+                chartService.handleChartUpdateError(chartId, "AI生成错误！");
                 return;
             }
             // 调用AI
             String result = aiManager.doChat(biModelId, userInput.toString());
             String[] splits = result.split("【【【【【");
             if (splits.length < 3) {
-                handleChartUpdateError(chartId, "更新图表成功状态失败");
+                chartService.handleChartUpdateError(chartId, "更新图表成功状态失败");
                 return;
             }
             String genChart = splits[1].trim();
@@ -352,10 +357,72 @@ public class ChartController {
             updateChartResult.setChartStatus(ChartConstant.CHART_STATUS_SUCCEEDED);
             boolean updateResult02 = chartService.updateById(updateChartResult);
             if (!updateResult02) {
-                handleChartUpdateError(chartId, "更新图表成功状态失败");
+                chartService.handleChartUpdateError(chartId, "更新图表成功状态失败");
             }
         }, threadPoolExecutor);
 
+        BiResponse biResponse = new BiResponse();
+        biResponse.setChartId(chart.getId());
+        return ResultUtils.success(biResponse);
+    }
+
+    /**
+     * 智能分析(消息队列)
+     *
+     * @param multipartFile
+     * @param genChartByAiRequest
+     * @param request
+     * @return
+     */
+    @PostMapping("/async/mq/gen")
+    public BaseResponse<BiResponse> genChartByAiMqAsync(@RequestPart("file") MultipartFile multipartFile,
+                                                      GenChartByAiRequest genChartByAiRequest, HttpServletRequest request) {
+        User loginUser = userService.getLoginUser(request);
+        if (loginUser == null) {
+            throw new BusinessException(ErrorCode.NOT_LOGIN_ERROR, "未登录，请先登录！");
+        }
+
+        String chartName = genChartByAiRequest.getChartName();
+        String chartType = genChartByAiRequest.getChartType();
+        String goal = genChartByAiRequest.getGoal();
+        // 校验
+        ThrowUtils.throwIf(StringUtils.isBlank(goal), ErrorCode.PARAMS_ERROR, "目标为空");
+        ThrowUtils.throwIf(StringUtils.isBlank(chartName), ErrorCode.PARAMS_ERROR, "图表名称为空");
+        ThrowUtils.throwIf(StringUtils.isBlank(chartName), ErrorCode.PARAMS_ERROR, "图表类型为空");
+        ThrowUtils.throwIf(StringUtils.isNotBlank(goal) && goal.length() > 1000, ErrorCode.PARAMS_ERROR, "目标描述过程");
+        ThrowUtils.throwIf(StringUtils.isNotBlank(chartName) && chartName.length() > 100, ErrorCode.PARAMS_ERROR, "图表名称过长");
+        ThrowUtils.throwIf(StringUtils.isNotBlank(chartType) && chartType.length() > 100, ErrorCode.PARAMS_ERROR, "图表类型过长");
+
+        // 校验文件
+
+        // 文件大小
+        long size = multipartFile.getSize();
+        final long ONE_MB = 5 * 1024 * 1024L;
+        ThrowUtils.throwIf(size > ONE_MB, ErrorCode.PARAMS_ERROR, "文件超过 5M");
+
+        // 校验文件后缀
+        // 原始文件名
+        String originalFilename = multipartFile.getOriginalFilename();
+        String suffix = FileUtil.getSuffix(originalFilename);
+        final List<String> validFileSuffix = Arrays.asList("xlsx", "xls");
+        ThrowUtils.throwIf(!validFileSuffix.contains(suffix), ErrorCode.PARAMS_ERROR, "文件后缀非法");
+
+        //判断限流，每个用户一个限流器
+        redisLimiterManager.doRateLimiter(ChartConstant.USER_GEN_CHART_BY_ID + loginUser.getId());
+        //压缩后的数据
+        String csvData = ExcelUtils.excelToCsv(multipartFile);
+        // 插入到数据库
+        Chart chart = new Chart();
+        chart.setGoal(goal);
+        chart.setChartData(csvData);
+        chart.setChartType(chartType);
+        chart.setChartStatus(ChartConstant.CHART_STATUS_WAIT);
+        chart.setUserId(loginUser.getId());
+        chart.setChartName(chartName);
+        boolean saveResult = chartService.save(chart);
+        Long chartId = chart.getId();
+        ThrowUtils.throwIf(!saveResult, ErrorCode.SYSTEM_ERROR, "图表保存失败！");
+        rabbitTemplate.convertAndSend(RabbitmqConstant.BI_EXCHANGE_NAME, RabbitmqConstant.BI_ROUTING_KEY, chartId.toString());
         BiResponse biResponse = new BiResponse();
         biResponse.setChartId(chart.getId());
         return ResultUtils.success(biResponse);
@@ -449,14 +516,5 @@ public class ChartController {
         return ResultUtils.success(biResponse);
     }
 
-    public void handleChartUpdateError(long chartId, String execMessage) {
-        Chart updateChartResult = new Chart();
-        updateChartResult.setId(chartId);
-        updateChartResult.setChartStatus(ChartConstant.CHART_STATUS_FAILED);
-        updateChartResult.setExecMessage(execMessage);
-        boolean updateResult = chartService.updateById(updateChartResult);
-        if (!updateResult) {
-            log.error("更新失败状态失败" + chartId + execMessage);
-        }
-    }
+
 }
