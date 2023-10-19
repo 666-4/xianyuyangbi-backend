@@ -2,7 +2,7 @@
 
 
 
-### 主流
+### 主流技术
 
 - Spring Boot 2.7.x
 - Spring MVC
